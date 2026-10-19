@@ -1,0 +1,15 @@
+.venv/
+data/
+results/
+__pycache__/
+.pytest_cache/
+
+.env
+.env.*
+!.env.example
+*.log
+.cache/
+.ipynb_checkpoints/
+*.pt
+*.pth
+*.safetensors

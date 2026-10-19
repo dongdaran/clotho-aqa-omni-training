@@ -1,0 +1,14 @@
+torch>=2.7,<3
+transformers==4.57.1
+ms-swift==3.12.0
+qwen-omni-utils
+decord>=0.6
+accelerate>=1.2
+peft>=0.17,<0.19
+librosa>=0.10.2,<1
+soundfile>=0.12,<1
+tqdm>=4.66,<5
+tensorboard>=2.18,<3
+optuna>=4.3,<5
+optuna-dashboard>=0.18,<1
+numpy>=1.26,<3
