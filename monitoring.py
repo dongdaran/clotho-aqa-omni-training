@@ -103,7 +103,7 @@ def _alive(pid: int) -> bool:
         return False
 
 
-def start_monitoring(root: Path, legacy: bool = False, show_colab: bool = True) -> dict:
+def start_monitoring(root: Path, legacy: bool = False, show_colab: bool = True, with_optuna: bool = True) -> dict:
     root = root.resolve()
     root.mkdir(parents=True, exist_ok=True)
     # Process identities live on this runtime, not on shared Drive.
@@ -131,7 +131,7 @@ def start_monitoring(root: Path, legacy: bool = False, show_colab: bool = True) 
                           '--load_fast=false'], port_tb)
     if legacy:
         launch('legacy_bridge', [sys.executable, str(Path(__file__).resolve()), '--bridge-only', '--root', str(root)])
-    else:
+    elif with_optuna:
         from tune import open_storage
         open_storage(root / 'study.journal')
         port_optuna = free_port(8080)

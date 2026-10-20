@@ -81,6 +81,14 @@ def run_job(job: dict) -> dict:
     best_step, stale = 0, 0
     stop_reason = "max_steps"
     before = {}
+    from recovery import latest_checkpoint
+    checkpoint = latest_checkpoint(output) if mode in ('search', 'train') else None
+    if checkpoint:
+        saved = json.loads((checkpoint / 'aqa_state.json').read_text())
+        best.update(saved['best'])
+        history.extend(saved['history'])
+        best_step, stale = saved['best_step'], saved['stale']
+        print(f'Resuming complete checkpoint: {checkpoint}', flush=True)
 
     class MonitorCallback(TrainerCallback):
         def __init__(self, processor):
@@ -165,7 +173,7 @@ def run_job(job: dict) -> dict:
                 if decision.get("prune"):
                     stop_reason = decision.get("reason", "optuna_pruned")
                     control.should_training_stop = True
-            if stale >= job.get("patience", 2) and step >= job.get("min_steps", 100):
+            if mode == "search" and stale >= job.get("patience", 2) and step >= job.get("min_steps", 100):
                 stop_reason = "no_improvement"
                 control.should_training_stop = True
             self.last_step_end = time.monotonic()
@@ -179,12 +187,29 @@ def run_job(job: dict) -> dict:
             durations.append(now - self.last_step_end)
             self.last_step_end = now
             deadline_reached = job.get("deadline") is not None and time.time() >= job["deadline"]
-            if mode == "search" and (state.global_step % job["eval_steps"] == 0
-                                      or state.global_step == max_steps or deadline_reached):
+            if mode in ("search", "train") and (state.global_step % job["eval_steps"] == 0
+                                      or state.global_step == max_steps or deadline_reached
+                                      or (mode == "train" and state.global_step % job.get("epoch_steps", max_steps) == 0)):
                 self.validate(model, state, control)
                 if deadline_reached:
                     stop_reason = "budget_exhausted"
                     control.should_training_stop = True
+            if mode == 'train' and (state.global_step % job['eval_steps'] == 0
+                                     or state.global_step == max_steps
+                                     or state.global_step % job.get('epoch_steps', max_steps) == 0):
+                control.should_save = True
+            return control
+
+        def on_save(self, args, state, control, **kwargs):
+            # Written last: its presence marks a complete resumable checkpoint.
+            write_json(output / f'checkpoint-{state.global_step}' / 'aqa_state.json',
+                       {'best': best, 'history': history, 'best_step': best_step, 'stale': stale})
+            if state.global_step == best_step:
+                write_json(output / 'best_checkpoint.json',
+                           {'step': best_step, 'validation': best,
+                            'checkpoint': str((output / f'checkpoint-{best_step}').resolve()),
+                            'adapter': str((output / 'best_adapter').resolve())})
+            print(f'Checkpoint saved: step {state.global_step}', flush=True)
             return control
 
         def on_train_end(self, args, state, control, model=None, **kwargs):
@@ -204,7 +229,7 @@ def run_job(job: dict) -> dict:
                         'prediction_change_rate': sum(normal[k] != muted[k] for k in normal) / len(normal),
                         'note': 'Diagnostic only; low change can also reflect baseline answer bias.',
                     }
-            seconds = statistics.median(durations[2:] or durations)
+            seconds = statistics.median(durations[2:] or durations or [1e-9])
             result.update({"mode": mode, "completed_steps": state.global_step,
                            "seconds_per_step": seconds, "examples_per_second": 64 / seconds,
                            "max_reserved_gib": torch.cuda.max_memory_reserved() / 1024**3,
@@ -213,6 +238,10 @@ def run_job(job: dict) -> dict:
                            "stop_reason": stop_reason, "best_step": best_step,
                            "best": best if best_step else None,
                            "adapter": str((output / "best_adapter").resolve()) if best_step else None})
+            if mode == "train":
+                model.save_pretrained(output / "final_adapter", safe_serialization=True)
+                self.processor.save_pretrained(output / "final_adapter")
+                result["final_adapter"] = str((output / "final_adapter").resolve())
             self.writer.close()
             write_json(output / "result.json", result)
             write_json(output / "status.json", {"state": "FINISHED", **result})
@@ -253,7 +282,9 @@ def run_job(job: dict) -> dict:
         gradient_checkpointing=job["gradient_checkpointing"],
         gradient_checkpointing_kwargs={"use_reentrant": False},
         warmup_steps=min(10, max_steps // 10), warmup_ratio=0, lr_scheduler_type="linear", optim="adamw_torch",
-        eval_strategy="no", save_strategy="no", report_to=["tensorboard"],
+        eval_strategy="no", save_strategy="steps" if mode in ("search", "train") else "no",
+        save_steps=50 if mode == "search" else job.get("save_steps", 3000),
+        save_only_model=False, resume_from_checkpoint=str(checkpoint) if checkpoint else None, report_to=["tensorboard"],
         logging_strategy="steps", logging_steps=1 if mode != "search" else 10, logging_first_step=True,
         logging_dir=str((output / "runs").resolve()),
         output_dir=str(output.resolve()), add_version=False,

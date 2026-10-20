@@ -24,7 +24,7 @@ def prepare(data):
         target = source / name
         if not target.exists():
             temporary = target.with_suffix(target.suffix + '.part')
-            subprocess.run(['curl', '-fL', '--retry', '5',
+            subprocess.run(['curl', '-fL', '-C', '-', '--retry', '5',
                             f'https://zenodo.org/records/6473207/files/{name}?download=1',
                             '-o', str(temporary)], check=True)
             temporary.replace(target)
@@ -59,23 +59,19 @@ def check_gpu():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--stage', choices=('all', 'prepare', 'baseline', 'search', 'test'), default='all')
+    parser.add_argument('--stage', choices=('all', 'prepare', 'baseline', 'search', 'train', 'test'), default='all')
     parser.add_argument('--data-root', type=Path, default=ROOT / 'data')
     parser.add_argument('--output-root', type=Path, default=ROOT / 'results/a100_macro_f1')
-    parser.add_argument('--trials', type=int, default=3)
     parser.add_argument('--max-steps', type=int, default=150)
     parser.add_argument('--eval-steps', type=int, default=50)
     parser.add_argument('--min-steps', type=int, default=100)
-    parser.add_argument('--timeout-seconds', type=int, default=21600)
-    parser.add_argument('--skip-rank32', action='store_true')
     parser.add_argument('--no-monitor', action='store_true')
     args = parser.parse_args()
-    if not (args.trials >= 1 and args.max_steps >= args.min_steps >= args.eval_steps >= 1
-            and args.timeout_seconds >= 0):
+    if not (args.max_steps >= args.min_steps >= args.eval_steps >= 1):
         parser.error('Invalid trial/step/time budget')
     data, output = args.data_root.resolve(), args.output_root.resolve()
     processed, baseline = data / 'processed', output / 'baseline/val_predictions.metrics.json'
-    search = output / 'search'
+    search = output / 'search_greedy'
     if args.stage != 'prepare':
         check_gpu()
     if args.stage in ('all', 'prepare'):
@@ -90,13 +86,14 @@ def main():
     if args.stage in ('all', 'search'):
         if not args.no_monitor:
             from monitoring import start_monitoring
-            start_monitoring(search, show_colab=False)
-        flags = ['--skip-rank32'] if args.skip_rank32 else []
-        run('tune.py', '--data-dir', processed, '--baseline-metrics', baseline,
-            '--output-dir', search, '--trials', args.trials, '--max-steps', args.max_steps,
-            '--eval-steps', args.eval_steps, '--min-steps', args.min_steps,
-            '--timeout-seconds', args.timeout_seconds, *flags)
-    if args.stage in ('all', 'test'):
+            start_monitoring(output / 'search_greedy', show_colab=False, with_optuna=False)
+        run('greedy_search.py', '--data-dir', processed, '--baseline-metrics', baseline,
+            '--output-dir', output / 'search_greedy', '--max-steps', args.max_steps,
+            '--eval-steps', args.eval_steps, '--min-steps', args.min_steps)
+    if args.stage in ('all', 'train'):
+        run('train_selected.py', '--data-dir', processed, '--search-dir', output / 'search_greedy',
+            '--output-dir', output / 'search_greedy' / 'train_full_2epochs')
+    if args.stage == 'test':
         run('finalize.py', '--data-dir', processed, '--best-tsv', search / 'best.tsv',
             '--output-dir', output / 'test')
     print(f'Finished {args.stage}. Results: {output}', flush=True)

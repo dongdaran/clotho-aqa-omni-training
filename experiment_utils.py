@@ -119,8 +119,11 @@ def audit_data(data_dir: Path) -> dict:
         durations = []
         sample_rates = Counter()
         for path, row in audio.items():
-            key = audio_key(row.get("file_name", Path(path).name))
-            previous = seen.setdefault(key, split)
+            key = str(Path(path).resolve())
+            content_key = "sha256:" + file_digest(Path(path))
+            previous = seen.setdefault(content_key, split)
+            if previous == split:
+                previous = seen.setdefault(key, split)
             if previous != split:
                 raise ValueError(f"Audio leakage between {previous} and {split}: {path}")
             info = sf.info(path)

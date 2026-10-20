@@ -82,7 +82,7 @@ class DataAndBudgetTests(unittest.TestCase):
             paths = {}
             for split in ('train', 'val', 'test'):
                 audio = base / f'{split}.wav'
-                sf.write(audio, np.ones(160)*.01, 16000, subtype='FLOAT')
+                sf.write(audio, np.ones(160)*(.01 + ('train', 'val', 'test').index(split)*.01), 16000, subtype='FLOAT')
                 paths[split] = [{'id': split, 'file_name': audio.name, 'audio_path': str(audio),
                                  'question': 'Are birds audible?', 'answer': 'yes', 'yes_votes': 1, 'no_votes': 0}]
             paths['train'] = augment_records(paths['train'], base / 'augmented')
@@ -91,6 +91,7 @@ class DataAndBudgetTests(unittest.TestCase):
             summary = audit_data(base)
             self.assertEqual(summary['train']['questions'], 7)
             paths['val'][0]['file_name'] = 'train.wav'
+            paths['val'][0]['audio_path'] = str(base / 'train.wav')
             write_rows(base / 'val.jsonl', paths['val'])
             with self.assertRaisesRegex(ValueError, 'leakage'):
                 audit_data(base)

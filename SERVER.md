@@ -56,7 +56,7 @@ ssh -N -L 6006:127.0.0.1:6006 -L 8080:127.0.0.1:8080 user@server
 
 `http://localhost:6006`, `http://localhost:8080`에서 확인합니다. 모니터링이 필요 없으면 `--no-monitor`를 붙이세요.
 
-중단 후 같은 명령으로 재실행하면 완료된 작업을 재사용하고 중단된 trial은 원본 모델부터 다시 실행합니다. optimizer의 중간 step부터 재개하지는 않습니다. 이전 balanced accuracy 탐색 결과와 혼합하지 말고 새 output 폴더를 사용하세요. 설정을 바꾼 실험도 새 폴더가 필요합니다. 서버 경로가 달라졌다면 `--stage prepare`로 오디오 절대 경로를 다시 생성하세요.
+중단 후 같은 명령으로 재실행하면 완료된 작업을 재사용하고 중단된 trial은 마지막 완전한 50-step 체크포인트에서 optimizer·scheduler·RNG와 함께 재개합니다. 최종 학습도 저장된 체크포인트에서 자동 재개합니다. 체크포인트가 없으면 원본 모델부터 시작합니다. 이전 balanced accuracy 탐색 결과와 혼합하지 말고 새 output 폴더를 사용하세요. 설정을 바꾼 실험도 새 폴더가 필요합니다. 서버 경로가 달라졌다면 `--stage prepare`로 오디오 절대 경로를 다시 생성하세요.
 
 실제 A100 throughput과 GPU 학습은 이 코드 작성 환경에서 검증하지 못했습니다. `search/performance.json`에 해당 서버의 실측 결과가 저장됩니다.
 

@@ -1,3 +1,19 @@
+## 현재 서버 실행 설정
+
+현재 기본 서버 실행은 Optuna 없이 LR 후보 5e-5, 1e-4, 2.5e-5를 비교합니다. rank 16, microbatch 16, gradient accumulation 4를 고정합니다. 탐색은 같은 샘플링 입력을 후보마다 사용하며 후보당 최대 150 optimizer step, 50 step마다 val 200문항을 평가합니다. 작은 val 상위 최대 2개를 전체 val로 재평가해 선택합니다. 이전 Optuna 실행 설명은 아래에 기록으로 남아 있습니다.
+
+최종 학습은 원본 4,695문항과 증강 28,170행을 모두 포함한 32,865행이 1 epoch입니다. epoch마다 전체 행을 seed 42로 독립적으로 섞고, 2 epoch(65,730행, 약 1,028 optimizer step)를 학습합니다. 전체 val을 100 step마다와 epoch 경계에서 평가합니다. 최고 macro-F1 가중치는 `best_adapter/`, 최고 재개용 체크포인트 경로와 점수는 `best_checkpoint.json`에 저장합니다. 평가 시점과 3,000 step마다 재개용 체크포인트를 저장하며, 종료 가중치는 `final_adapter/`에 저장합니다.
+
+결과는 `results/a100_macro_f1/search_greedy/`에 저장합니다. 탐색 표는 `trials.tsv`, 선택 설정은 `best.tsv`, 최종 학습은 `train_full_2epochs/`입니다. `trials.tsv`의 `sample_val_macro_f1`은 200문항 최고 점수, `full_val_macro_f1`은 최종 후보의 전체 val 점수입니다. Optuna pruning은 사용하지 않으며 작은 val 점수가 연속 개선되지 않으면 100 step 이후 후보 학습이 종료될 수 있습니다.
+
+```bash
+bash run_on_server.sh --stage search
+bash run_on_server.sh --stage train
+tail -f results/a100_macro_f1/pipeline.log
+```
+
+---
+
 # Clotho-AQA Yes/No · Qwen2.5-Omni
 
 **A100 80GB 일반 서버:** [서버 실행 안내](SERVER.md)를 따르세요. `bash run_on_server.sh`로 데이터 준비부터 baseline·Optuna 탐색·test까지 실행합니다. 일반 AdamW를 사용하고 accuracy·macro-F1을 기록하며 모델 선택은 macro-F1을 기준으로 합니다.
@@ -95,7 +111,7 @@ python finalize.py --data-dir data/processed \
   --best-tsv results/optuna_budgeted/best.tsv --output-dir results/optuna_final
 ```
 
-`--skip-rank32`로 추가 rank 실험을 끌 수 있습니다. `--profile-steps`, `--overfit-steps`, `--val-size`, `--max-steps`, `--trials`로 예산을 조절합니다. 데이터나 설정을 바꾸면 새 output 폴더를 사용하세요. 완료된 프로파일·학습 검사는 재사용합니다. 중단된 trial은 실패 상태로 기록한 뒤 동일 파라미터로 원본 모델부터 다시 시작합니다.
+`--skip-rank32`로 추가 rank 실험을 끌 수 있습니다. `--profile-steps`, `--overfit-steps`, `--val-size`, `--max-steps`, `--trials`로 예산을 조절합니다. 데이터나 설정을 바꾸면 새 output 폴더를 사용하세요. 완료된 프로파일·학습 검사는 재사용합니다. 중단된 trial은 실패 상태로 기록하고 동일 파라미터의 새 trial에서 기존 작업 폴더의 마지막 완전한 체크포인트를 재개합니다. 체크포인트가 없으면 원본 모델부터 시작합니다.
 
 탐색 저장소는 **Optuna JournalStorage (`study.journal`)**입니다. SQLite는 쓰지 않으며 `trials.tsv`/`best.tsv`도 함께 기록합니다. 기존 `results/swift_aug_grid/` 결과와 실행은 건드리지 않습니다. `current.json`, 각 작업의 `status.json`, `step_metrics.jsonl`에도 현재 상태가 기록됩니다. 학습 ETA는 남은 optimizer update 기준으로 평가·모델 로딩 시간을 포함하지 않습니다.
 
@@ -118,3 +134,41 @@ python monitoring.py --root results/swift_aug_grid --legacy
 참고: [Optuna Dashboard](https://optuna-dashboard.readthedocs.io/en/stable/getting-started.html), [TensorBoard 노트북 사용](https://www.tensorflow.org/tensorboard/tensorboard_in_notebooks), [ms-swift SFT API](https://github.com/modelscope/ms-swift/blob/v3.12.0/swift/llm/train/sft.py).
 
 예측 TSV에서 빈 `prediction`은 Yes/No 이외의 출력으로 오답 처리합니다. `qwen_train.py --mode train`은 이전 직접 학습 루프이므로 새 탐색에는 사용하지 마세요. 원본 데이터 라이선스는 공식 배포 페이지에서 확인하세요.
+
+## 선택 설정으로 약 2 epoch 학습
+
+`bash run_on_server.sh --stage all`은 준비·baseline·탐색 후 선택한 LR/rank로 원본 모델부터 약 2 source epoch 학습합니다. `--stage train`으로 이 단계만 실행할 수 있습니다. 원본 문항당 변형 하나를 선택하는 샘플링을 유지하고 effective batch 64 기준으로 올림한 step 수를 사용합니다. 매 source epoch마다 전체 val을 평가하며, 조기 종료 없이 지정 step을 완료합니다. 학습 결과는 `search/train_2epochs/`에 저장합니다. Trainer 체크포인트는 3,000 optimizer step마다 저장하며, 총 step이 3,000보다 작아도 `final_adapter/`를 별도로 저장합니다. 최종 학습 지표는 같은 search TensorBoard에 표시됩니다. 기존 탐색 어댑터의 test 평가 명령은 `--stage test`입니다.
+
+현재 서버 탐색은 사용자 지정 microbatch 16, gradient accumulation 4 (effective batch 64)로 고정합니다. 프로파일과 trial에서 batch 32/64는 시도하지 않으며 batch 16 OOM 시 중단합니다.
+
+## 중단 복구
+
+- Baseline: 16문항 배치마다 `val_predictions.partial.json`을 원자적으로 저장합니다. 재실행 시 모델 ID와 입력 데이터 지문, 문항 순서·라벨을 확인하고 처리하지 않은 문항부터 예측합니다. 완료 후 기존 TSV와 metrics JSON을 생성합니다.
+- 탐색: 50 optimizer step마다 모델·optimizer·scheduler·RNG를 포함하는 Trainer 체크포인트를 저장합니다. 재실행 시 같은 작업 폴더의 마지막 완전한 체크포인트에서 이어갑니다. 중단된 Optuna trial은 FAIL로 남고 같은 파라미터의 새 trial이 해당 작업 폴더를 재사용합니다.
+- 최종 학습: 약 1 source epoch 경계와 3,000 optimizer step마다 체크포인트를 저장하고 마지막 `final_adapter`도 저장합니다. 같은 명령을 다시 실행하면 마지막 완전한 체크포인트에서 자동 재개합니다.
+- `aqa_state.json`은 체크포인트 저장이 끝난 뒤 기록되며 검증 최고 점수·이력도 복구합니다. 저장 도중 끊긴 체크포인트는 무시합니다. GPU에서 실제 중단·재개 통합 실행은 아직 검증 전입니다.
+
+## 탐색 결과 표 읽기
+
+`results/a100_macro_f1/search/trials.tsv`에는 trial 하나당 한 행이 저장됩니다. 최종 선택한 한 행은 같은 폴더의 `best.tsv`에 저장되며, 이 설정의 LR·rank를 최종 약 2 epoch 학습에 사용합니다. 사용자 지정 output 경로에서는 해당 경로의 `search/`를 확인하세요.
+
+| TSV 항목 | 의미 |
+|---|---|
+| `number` | Trial 번호 |
+| `state` | `COMPLETE`: 정상 완료, `PRUNED`: Optuna 비교에 의해 조기 중단, `FAIL`: 실행 실패 |
+| `learning_rate`, `rank` | 해당 trial의 LR과 LoRA rank |
+| `microbatch`, `effective_batch_size` | 실제 microbatch와 gradient accumulation을 반영한 유효 batch |
+| `value` | COMPLETE는 작은 val 200문항의 최고 macro-F1. PRUNED는 Optuna가 기록한 마지막 중간 점수일 수 있으므로 최고 점수는 평가 이력과 함께 확인 |
+| `full_val_value` | 전체 val 1,376문항 macro-F1. 전체 평가를 받지 않은 trial은 빈 값 |
+| `best_step` | 작은 val macro-F1이 가장 높았던 optimizer step |
+| `stop_reason` | 학습 종료 이유 |
+| `adapter` | 최고 작은 val 점수의 어댑터 저장 경로 |
+| `intermediate_values` | step별 작은 val macro-F1 이력(JSON) |
+
+작은 val 평가는 기본 50 optimizer step마다 수행합니다. **PRUNED trial은 중단 전까지의 작은 val 평가 결과만 남고, 전체 val 평가는 받지 않으며 최종 선택 후보에서 제외됩니다.** 정상 완료한 `COMPLETE` trial을 작은 val 최고 macro-F1 순으로 정렬해 상위 최대 2개만 전체 val로 재평가합니다. 따라서 `COMPLETE`여도 전체 val 평가 대상이 아니면 `full_val_value`가 비어 있습니다. 최종 선택은 전체 val macro-F1을 기준으로 합니다.
+
+`trials.tsv`는 trial 종료 시 갱신되며, 웹에서는 Optuna Dashboard의 Trials 화면에서 진행 중인 trial의 중간 점수도 확인할 수 있습니다.
+
+## StemFoley 평가
+
+HF 로그인 후 `uv run python -u evaluate_stemfoley.py --batch-size 128`로 실행합니다. 베이스 Qwen, 최종 학습 step 100, 탐색 최고 step 150을 평가하며, 476개 전체와 `in_final_v3` 306개 부분집합의 accuracy·macro-F1을 저장합니다. 세 판정법은 TAD yes/no 토큰 그룹 비교, 같은 그룹 확률의 50% 기준, 선행 공백을 포함한 단일 `yes`/`no` 토큰 비교입니다. 그룹 확률 50% 기준은 TAD 비교와 수학적으로 같은 결과를 냅니다. 예측과 요약은 `results/stemfoley_eval/`에 저장합니다.

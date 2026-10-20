@@ -170,17 +170,21 @@ def metrics(rows: list[dict]) -> dict:
             "invalid_outputs": sum(r["prediction"] is None for r in rows)}
 
 
-def evaluate(model, processor, rows: list[dict], output_path: Path | None = None) -> dict:
+def evaluate(model, processor, rows: list[dict], output_path: Path | None = None, *, resume_key: str | None = None) -> dict:
     import torch
     from tqdm.auto import tqdm
 
     model.eval()
-    results = []
-    batch_size = 32
+    from recovery import prediction_identity, load_predictions, save_predictions
+    journal = output_path.with_suffix('.partial.json') if output_path and resume_key else None
+    identity = prediction_identity(rows, resume_key) if journal else None
+    results = load_predictions(journal, identity, rows) if journal else []
+    batch_size = 16
     processor.tokenizer.padding_side = "left"
     progress = tqdm(total=len(rows), desc="Evaluation", unit="item",
                     dynamic_ncols=True, leave=True)
-    start = 0
+    start = len(results)
+    progress.update(start)
     while start < len(rows):
         batch = rows[start:start + batch_size]
         try:
@@ -193,6 +197,8 @@ def evaluate(model, processor, rows: list[dict], output_path: Path | None = None
             results.extend({"id": row["id"], "answer": row["answer"],
                             "prediction": normalize_answer(raw), "raw_output": raw}
                            for row, raw in zip(batch, decoded))
+            if journal:
+                save_predictions(journal, identity, results)
             start += len(batch)
             progress.update(len(batch))
             del inputs, generated
@@ -353,7 +359,8 @@ def main() -> None:
         model, processor = load_model(adapter=args.adapter)
         split = "val" if args.mode == "baseline" else "test"
         result = evaluate(model, processor, read_jsonl(args.data_dir / f"{split}.jsonl"),
-                          args.output_dir / f"{split}_predictions.tsv")
+                          args.output_dir / f"{split}_predictions.tsv",
+                          resume_key=MODEL_ID if args.mode == "baseline" else None)
         result["dataset_sha256"] = hashlib.sha256((args.data_dir / f"{split}.jsonl").read_bytes()).hexdigest()
         (args.output_dir / f"{split}_predictions.metrics.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result, indent=2))

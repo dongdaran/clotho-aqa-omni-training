@@ -1,0 +1,92 @@
+{
+  "metadata": {
+    "model_id": "Qwen/Qwen2.5-Omni-3B",
+    "checkpoint": "Qwen/Qwen2.5-Omni-3B",
+    "dataset_revision": "dab3181ae9543d1c9ead49c36bfcae6e649e9e66",
+    "prompt_template": "Does this audio contain the sound of {caption}? Respond using only one word: yes or no.",
+    "system_prompt": "Listen to the audio and answer the question with exactly Yes or No.",
+    "tad_yes_token_ids": [
+      7414,
+      9454,
+      9693,
+      9834,
+      14004,
+      14080
+    ],
+    "tad_no_token_ids": [
+      902,
+      2152,
+      2308,
+      2753,
+      5664,
+      8996
+    ],
+    "single_token_ids": {
+      " yes": 9834,
+      " no": 902
+    },
+    "requested_batch_size": 128
+  },
+  "results": [
+    {
+      "model": "qwen_base",
+      "subset": "all",
+      "method": "tad_token_set",
+      "n": 476,
+      "accuracy": 0.8529411764705882,
+      "macro_f1": 0.8271066832710668,
+      "yes_f1": 0.8939393939393939,
+      "no_f1": 0.7602739726027398
+    },
+    {
+      "model": "qwen_base",
+      "subset": "all",
+      "method": "yes_probability_over_50",
+      "n": 476,
+      "accuracy": 0.8529411764705882,
+      "macro_f1": 0.8271066832710668,
+      "yes_f1": 0.8939393939393939,
+      "no_f1": 0.7602739726027398
+    },
+    {
+      "model": "qwen_base",
+      "subset": "all",
+      "method": "single_token",
+      "n": 476,
+      "accuracy": 0.8760504201680672,
+      "macro_f1": 0.8369929245967485,
+      "yes_f1": 0.9167842031029619,
+      "no_f1": 0.757201646090535
+    },
+    {
+      "model": "qwen_base",
+      "subset": "in_final_v3",
+      "method": "tad_token_set",
+      "n": 306,
+      "accuracy": 0.9052287581699346,
+      "macro_f1": 0.8575761952910588,
+      "yes_f1": 0.9399585921325052,
+      "no_f1": 0.7751937984496124
+    },
+    {
+      "model": "qwen_base",
+      "subset": "in_final_v3",
+      "method": "yes_probability_over_50",
+      "n": 306,
+      "accuracy": 0.9052287581699346,
+      "macro_f1": 0.8575761952910588,
+      "yes_f1": 0.9399585921325052,
+      "no_f1": 0.7751937984496124
+    },
+    {
+      "model": "qwen_base",
+      "subset": "in_final_v3",
+      "method": "single_token",
+      "n": 306,
+      "accuracy": 0.9248366013071896,
+      "macro_f1": 0.8677937447168216,
+      "yes_f1": 0.9546351084812623,
+      "no_f1": 0.780952380952381
+    }
+  ]
+}

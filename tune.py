@@ -111,7 +111,8 @@ def execute_job(job: dict, env: dict, on_event=None) -> dict:
         return json.loads(completed_path.read_text())
     write_json(job_path, job)
     # Never append a new attempt to stale scalar history at the same steps.
-    if (output / 'step_metrics.jsonl').exists():
+    from recovery import latest_checkpoint
+    if (output / 'step_metrics.jsonl').exists() and latest_checkpoint(output) is None:
         (output / 'step_metrics.jsonl').unlink()
     code = [sys.executable, '-u', str(Path(__file__).with_name('swift_train.py')),
             '--job', str(job_path.resolve())]
@@ -176,18 +177,18 @@ def preparation(data_dir, output, settings, baseline_path, env, phase=None):
                [:settings['profile_steps'] * 64])
     profile_common = {**common, 'mode': 'profile', 'max_steps': settings['profile_steps'],
                       'train_path': str(profile_path.resolve()), 'val_path': None}
-    for batch in MICROBATCHES:
+    for batch in (16,):
         job = {**profile_common, 'batch_size': batch, 'workers': 0, 'gradient_checkpointing': True,
                'output_dir': str((output / 'preflight' / f'batch_{batch}').resolve())}
         result = execute_job(job, env)
         if result.get('oom'):
-            print(f'Preflight OOM: {batch}; trying a smaller batch', flush=True)
+            print(f'Preflight OOM: batch={batch}, accumulation=4; fixed batch requested, stopping', flush=True)
             continue
         benchmarks.append(result)
         chosen_batch = batch
         break
     else:
-        raise RuntimeError('OOM at microbatch 1')
+        raise RuntimeError('OOM at fixed microbatch 16 / gradient accumulation 4')
     profile_failures = []
     for profile_index in range(2):
         workers = 2 if profile_index == 0 else min(benchmarks, key=lambda item: item['seconds_per_step'])['workers']
@@ -273,7 +274,8 @@ def run(data_dir: Path, output: Path, baseline_path: Path, settings: dict):
     for old in study.get_trials(deepcopy=False, states=(optuna.trial.TrialState.RUNNING,)):
         study.tell(old.number, state=optuna.trial.TrialState.FAIL)
         study.enqueue_trial(old.params, user_attrs={'stage': old.user_attrs.get('stage', 'lr'),
-                                                   'rank': old.user_attrs.get('rank', 16)})
+                                                   'rank': old.user_attrs.get('rank', 16),
+                                                   'resume_trial_number': old.user_attrs.get('resume_trial_number', old.number)})
     if not study.trials:
         for lr in (5e-5, 1e-4):
             study.enqueue_trial({'learning_rate': lr}, user_attrs={'stage': 'lr', 'rank': 16})
@@ -302,11 +304,11 @@ def run(data_dir: Path, output: Path, baseline_path: Path, settings: dict):
                         return {'prune': True, 'reason': 'optuna_pruned'}
                 return {'prune': False}
 
-        for batch in [b for b in MICROBATCHES if b <= runtime['batch_size']]:
+        for batch in (16,):
             job = {**common, **runtime, 'batch_size': batch, 'mode': 'search', 'interactive': True,
                    'rank': rank, 'learning_rate': lr, 'max_steps': settings['max_steps'],
                    'deadline': deadline,
-                   'output_dir': str((output / f'trial_{trial.number:03d}' / f'batch_{batch}').resolve())}
+                   'output_dir': str((output / f"trial_{trial.user_attrs.get('resume_trial_number', trial.number):03d}" / f'batch_{batch}').resolve())}
             print(f"Trial {trial.number}: rank={rank} LR={lr:.3g} batch={batch} accumulation={64//batch}", flush=True)
             result = execute_job(job, env, events)
             if result.get('oom'):
